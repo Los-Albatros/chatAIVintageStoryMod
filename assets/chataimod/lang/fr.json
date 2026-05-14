@@ -1,0 +1,15 @@
+{
+    "chataimod:command.description": "Poser une question à l'IA",
+    "chataimod:command.config.description": "Gérer la configuration chatAI",
+    "chataimod:ai.usage": "Usage : .ai <question>",
+    "chataimod:ai.thinking": "[{0}] Réflexion en cours...",
+    "chataimod:ai.response": "[{0}] {1}",
+    "chataimod:ai.provider_unavailable": "[chatAI] Fournisseur non disponible.",
+    "chataimod:ai.error": "[chatAI] Erreur lors du contact avec l'IA : {0}",
+    "chataimod:config.no_permission": "[chatAI] Vous n'avez pas la permission de faire cela.",
+    "chataimod:config.show": "[chatAI] Fournisseur : {0} | Clé API : {1}",
+    "chataimod:config.provider_set": "[chatAI] Fournisseur changé pour {0}.",
+    "chataimod:config.apikey_set": "[chatAI] Clé API mise à jour.",
+    "chataimod:config.unknown_provider": "[chatAI] Fournisseur inconnu : {0}. Utilisez : ollama, mistral, openai",
+    "chataimod:config.usage": "Usage : .ai config <show|provider <nom>|apikey <clé>>"
+}

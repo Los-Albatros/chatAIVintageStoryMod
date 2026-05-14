@@ -1,0 +1,76 @@
+using Vintagestory.API.Server;
+
+namespace chatAIVintageStoryMod.Config;
+
+public class ConfigManager
+{
+    private readonly ICoreServerAPI _api;
+    private ModConfigData _data = new();
+
+    public ConfigManager(ICoreServerAPI api)
+    {
+        _api = api;
+    }
+
+    public ModConfigData Data => _data;
+
+    public void Load()
+    {
+        _data = _api.LoadModConfig<ModConfigData>("chataimod.json") ?? new ModConfigData();
+    }
+
+    public void Save()
+    {
+        _api.StoreModConfig(_data, "chataimod.json");
+    }
+
+    public void SetProvider(string provider)
+    {
+        _data.Provider = provider.ToUpper();
+        Save();
+    }
+
+    public void SetApiKey(string provider, string key)
+    {
+        switch (provider.ToUpper())
+        {
+            case "MISTRAL": _data.Mistral.ApiKey = key; break;
+            case "OPENAI": _data.OpenAI.ApiKey = key; break;
+        }
+        Save();
+    }
+
+    public string GetApiKeyDisplay()
+    {
+        string raw = GetRawApiKey(_data.Provider);
+        return DisplayApiKey(raw);
+    }
+
+    private string GetRawApiKey(string provider) => provider.ToUpper() switch
+    {
+        "MISTRAL" => _data.Mistral.ApiKey,
+        "OPENAI" => _data.OpenAI.ApiKey,
+        _ => ""
+    };
+
+    public static string ResolveApiKey(string raw)
+    {
+        if (raw.StartsWith("${") && raw.EndsWith("}"))
+        {
+            string varName = raw[2..^1];
+            return Environment.GetEnvironmentVariable(varName) ?? "";
+        }
+        return raw;
+    }
+
+    public static string DisplayApiKey(string raw)
+    {
+        if (raw.StartsWith("${") && raw.EndsWith("}"))
+        {
+            string varName = raw[2..^1];
+            return Environment.GetEnvironmentVariable(varName) != null ? "[ENV]" : "[not set]";
+        }
+        if (string.IsNullOrEmpty(raw)) return "[not set]";
+        return "***";
+    }
+}
