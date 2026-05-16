@@ -3,6 +3,7 @@ namespace chatAIVintageStoryMod.Config;
 public class ModConfigData
 {
     public string Provider { get; set; } = "OLLAMA";
+    public int RateLimitSeconds { get; set; } = 30;
 
     public OllamaConfig Ollama { get; set; } = new();
     public ProviderConfig Mistral { get; set; } = new();

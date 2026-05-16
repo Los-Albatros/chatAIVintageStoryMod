@@ -2,14 +2,17 @@
     "type": "code",
     "name": "chatAI",
     "modid": "chataimod",
-    "version": "1.0.0",
+    "version": "1.0.1",
     "description": "Ask LLM questions in-game via .ai command. Supports Ollama, Mistral, OpenAI.",
     "authors": ["Los Albatros"],
     "website": "https://github.com/Los-Albatros/chatAIVintageStoryMod",
-    "side": "Server",
-    "requiredOnClient": false,
+    "side": "Universal",
+    "requiredOnClient": true,
     "requiredOnServer": true,
     "dependencies": {
         "game": "1.19.0"
+    },
+    "optionalDependencies": {
+        "configlib": "1.0.0"
     }
 }

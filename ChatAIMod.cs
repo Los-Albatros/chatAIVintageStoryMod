@@ -9,7 +9,7 @@ public class ChatAIMod : ModSystem
 {
     private ConfigManager? _configManager;
 
-    public override bool ShouldLoad(EnumAppSide forSide) => forSide == EnumAppSide.Server;
+    public override bool ShouldLoad(EnumAppSide forSide) => true;
 
     public override void StartServerSide(ICoreServerAPI api)
     {

@@ -1,4 +1,6 @@
+using System.Collections.Concurrent;
 using chatAIVintageStoryMod.Config;
+using chatAIVintageStoryMod.Network;
 using Vintagestory.API.Common;
 using Vintagestory.API.Config;
 using Vintagestory.API.Server;
@@ -9,6 +11,8 @@ public class AICommand
 {
     private readonly ICoreServerAPI _api;
     private readonly ConfigManager _config;
+    private readonly ConcurrentDictionary<string, DateTime> _rateLimitTracker = new();
+    private IServerNetworkChannel _channel = null!;
 
     public const string PrivilegeApiKey = "chataimod.apikey";
 
@@ -20,12 +24,84 @@ public class AICommand
 
     public void Register()
     {
+        _channel = _api.Network
+            .RegisterChannel("chataimod")
+            .RegisterMessageType<AIQueryPacket>()
+            .RegisterMessageType<AIResponsePacket>()
+            .RegisterMessageType<AIConfigSyncPacket>()
+            .RegisterMessageType<AIConfigChangePacket>()
+            .SetMessageHandler<AIQueryPacket>(OnClientQuery)
+            .SetMessageHandler<AIConfigChangePacket>(OnClientConfigChange);
+
+        _api.Event.PlayerJoin += OnPlayerJoin;
+
         _api.ChatCommands
             .Create("ai")
             .WithDescription(Lang("command.description"))
             .WithArgs(new StringArgParser("args", isMandatoryArg: false))
             .RequiresPrivilege(Privilege.chat)
             .HandleWith(OnAiCommand);
+    }
+
+    private void OnPlayerJoin(IServerPlayer player)
+    {
+        _channel.SendPacket(BuildConfigSyncPacket(player), player);
+    }
+
+    private AIConfigSyncPacket BuildConfigSyncPacket(IServerPlayer player)
+    {
+        var data = _config.Data;
+        string rawKey = data.Provider.ToUpper() switch
+        {
+            "MISTRAL" => data.Mistral.ApiKey,
+            "OPENAI" => data.OpenAI.ApiKey,
+            _ => ""
+        };
+        return new AIConfigSyncPacket
+        {
+            Provider = data.Provider,
+            RateLimitSeconds = data.RateLimitSeconds,
+            HasApiKey = !string.IsNullOrEmpty(ConfigManager.ResolveApiKey(rawKey)),
+            IsAdmin = player.HasPrivilege(Privilege.controlserver)
+        };
+    }
+
+    private void OnClientConfigChange(IServerPlayer player, AIConfigChangePacket packet)
+    {
+        if (!player.HasPrivilege(Privilege.controlserver))
+        {
+            _channel.SendPacket(new AIResponsePacket { Error = Lang("config.no_permission") }, player);
+            return;
+        }
+
+        if (!string.IsNullOrEmpty(packet.Provider))
+        {
+            string prov = packet.Provider.ToLower();
+            if (!new[] { "ollama", "mistral", "openai" }.Contains(prov))
+            {
+                _channel.SendPacket(new AIResponsePacket { Error = Lang("config.unknown_provider", prov) }, player);
+                return;
+            }
+            _config.SetProvider(prov);
+        }
+
+        if (packet.RateLimitSeconds >= 0)
+        {
+            _config.Data.RateLimitSeconds = packet.RateLimitSeconds;
+            _config.Save();
+        }
+
+        if (!string.IsNullOrEmpty(packet.ApiKey))
+            _config.SetApiKey(_config.Data.Provider, packet.ApiKey);
+
+        SyncConfigToAll();
+    }
+
+    private void OnClientQuery(IServerPlayer player, AIQueryPacket packet)
+    {
+        var result = ExecuteAiQuery(player, packet.Question);
+        if (result.StatusMessage != null && result.Status == EnumCommandStatus.Error)
+            _channel.SendPacket(new AIResponsePacket { Error = result.StatusMessage }, player);
     }
 
     private TextCommandResult OnAiCommand(TextCommandCallingArgs args)
@@ -42,9 +118,20 @@ public class AICommand
         if (string.IsNullOrEmpty(input))
             return TextCommandResult.Error(Lang("ai.usage"));
 
+        return ExecuteAiQuery(player, input);
+    }
+
+    private TextCommandResult ExecuteAiQuery(IServerPlayer? player, string input)
+    {
+        if (player != null && IsRateLimited(player.PlayerUID, out int secondsLeft))
+            return TextCommandResult.Error(Lang("ai.rate_limited", secondsLeft));
+
         var service = BuildService();
         if (!service.IsReady)
             return TextCommandResult.Error(Lang("ai.provider_unavailable"));
+
+        if (player != null)
+            _rateLimitTracker[player.PlayerUID] = DateTime.UtcNow;
 
         _ = Task.Run(async () =>
         {
@@ -64,6 +151,24 @@ public class AICommand
         });
 
         return TextCommandResult.Success(Lang("ai.thinking", service.ProviderName));
+    }
+
+    private bool IsRateLimited(string playerUid, out int secondsRemaining)
+    {
+        int limitSeconds = _config.Data.RateLimitSeconds;
+        if (limitSeconds <= 0) { secondsRemaining = 0; return false; }
+
+        if (_rateLimitTracker.TryGetValue(playerUid, out DateTime lastRequest))
+        {
+            var elapsed = DateTime.UtcNow - lastRequest;
+            if (elapsed.TotalSeconds < limitSeconds)
+            {
+                secondsRemaining = (int)(limitSeconds - elapsed.TotalSeconds) + 1;
+                return true;
+            }
+        }
+        secondsRemaining = 0;
+        return false;
     }
 
     private TextCommandResult HandleConfig(IServerPlayer? player, string[] args)
@@ -88,7 +193,9 @@ public class AICommand
                 if (!new[] { "ollama", "mistral", "openai" }.Contains(prov))
                     return TextCommandResult.Error(Lang("config.unknown_provider", prov));
                 _config.SetProvider(prov);
-                return TextCommandResult.Success(Lang("config.provider_set", prov));
+                _api.BroadcastMessageToAllGroups(Lang("config.provider_set", prov), EnumChatType.Notification);
+                SyncConfigToAll();
+                return TextCommandResult.Success("");
 
             case "apikey":
                 if (!HasApiKeyPermission(player))
@@ -96,11 +203,19 @@ public class AICommand
                 if (args.Length < 2)
                     return TextCommandResult.Error(Lang("config.usage"));
                 _config.SetApiKey(_config.Data.Provider, args[1]);
+                SyncConfigToAll();
                 return TextCommandResult.Success(Lang("config.apikey_set"));
 
             default:
                 return TextCommandResult.Error(Lang("config.usage"));
         }
+    }
+
+    private void SyncConfigToAll()
+    {
+        foreach (var p in _api.World.AllOnlinePlayers)
+            if (p is IServerPlayer sp)
+                _channel.SendPacket(BuildConfigSyncPacket(sp), sp);
     }
 
     private bool HasConfigPermission(IServerPlayer? player)

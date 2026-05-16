@@ -1,15 +1,17 @@
 {
     "chataimod:command.description": "Ask the AI a question",
     "chataimod:command.config.description": "Manage chatAI configuration",
-    "chataimod:ai.usage": "Usage: .ai <question>",
+    "chataimod:ai.usage": "Usage: /ai <question>  or  .ai <question>",
+    "chataimod:ai.sent": "[chatAI] Question sent...",
     "chataimod:ai.thinking": "[{0}] Thinking...",
     "chataimod:ai.response": "[{0}] {1}",
     "chataimod:ai.provider_unavailable": "[chatAI] Provider not available.",
     "chataimod:ai.error": "[chatAI] Error contacting AI: {0}",
+    "chataimod:ai.rate_limited": "[chatAI] Please wait {0}s before asking again.",
     "chataimod:config.no_permission": "[chatAI] You don't have permission to do this.",
     "chataimod:config.show": "[chatAI] Provider: {0} | API Key: {1}",
     "chataimod:config.provider_set": "[chatAI] Provider changed to {0}.",
     "chataimod:config.apikey_set": "[chatAI] API key updated.",
     "chataimod:config.unknown_provider": "[chatAI] Unknown provider: {0}. Use: ollama, mistral, openai",
-    "chataimod:config.usage": "Usage: .ai config <show|provider <name>|apikey <key>>"
+    "chataimod:config.usage": "Usage: /ai config <show|provider <name>|apikey <key>>"
 }
