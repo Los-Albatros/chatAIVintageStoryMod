@@ -11,8 +11,4 @@
     "requiredOnServer": true,
     "dependencies": {
         "game": "1.19.0"
-    },
-    "optionalDependencies": {
-        "configlib": "1.0.0"
-    }
-}
+    }}
