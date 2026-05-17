@@ -36,7 +36,7 @@ public abstract class OpenAICompatibleProvider : IAIProvider
         Func<string, Dictionary<string, JsonElement>, Task<string>>? toolExecutor = null)
     {
         var messages = BuildMessages(prompt, systemPrompt);
-        var responseBody = await SendRawAsync(messages, tools);
+        var responseBody = await SendHttpAsync(messages, tools);
 
         if (toolExecutor != null && tools != null && tools.Count > 0)
         {
@@ -62,7 +62,7 @@ public abstract class OpenAICompatibleProvider : IAIProvider
                     followUpMessages.Add(new { role = "tool", tool_call_id = callId, content = result });
                 }
 
-                var finalBody = await SendRawAsync(followUpMessages, tools: null);
+                var finalBody = await SendHttpAsync(followUpMessages, tools: null);
                 using var doc2 = JsonDocument.Parse(finalBody);
                 return doc2.RootElement
                     .GetProperty("choices")[0]
@@ -71,10 +71,8 @@ public abstract class OpenAICompatibleProvider : IAIProvider
                     .GetString() ?? "No response";
             }
 
-            using var doc3 = JsonDocument.Parse(responseBody);
-            return doc3.RootElement
-                .GetProperty("choices")[0]
-                .GetProperty("message")
+            // No tool_calls in response — reuse the already-parsed doc
+            return messageEl
                 .GetProperty("content")
                 .GetString() ?? "No response";
         }
@@ -94,11 +92,6 @@ public abstract class OpenAICompatibleProvider : IAIProvider
             messages.Add(new { role = "system", content = systemPrompt });
         messages.Add(new { role = "user", content = prompt });
         return messages;
-    }
-
-    private Task<string> SendRawAsync(List<object> messages, IReadOnlyList<MCPTool>? tools)
-    {
-        return SendHttpAsync(messages, tools);
     }
 
     private async Task<string> SendHttpAsync(List<object> messages, IReadOnlyList<MCPTool>? tools)
