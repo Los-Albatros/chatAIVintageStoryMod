@@ -29,6 +29,6 @@ public class AIConfigSyncPacket
 public class AIConfigChangePacket
 {
     [ProtoMember(1)] public string Provider { get; set; } = "";
-    [ProtoMember(2)] public int RateLimitSeconds { get; set; }
-    [ProtoMember(3)] public string ApiKey { get; set; } = ""; // empty = don't change
+    [ProtoMember(2)] public int? RateLimitSeconds { get; set; }   // null = don't change
+    [ProtoMember(3)] public string ApiKey { get; set; } = "";     // empty = don't change
 }
