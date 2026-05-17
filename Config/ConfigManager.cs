@@ -4,13 +4,13 @@ namespace chatAIVintageStoryMod.Config;
 
 public class ConfigManager
 {
+    private static readonly string[] KnownProviders =
+        { "ollama", "mistral", "openai", "anthropic", "grok", "deepseek" };
+
     private readonly ICoreServerAPI _api;
     private ModConfigData _data = new();
 
-    public ConfigManager(ICoreServerAPI api)
-    {
-        _api = api;
-    }
+    public ConfigManager(ICoreServerAPI api) { _api = api; }
 
     public ModConfigData Data => _data;
 
@@ -19,10 +19,10 @@ public class ConfigManager
         _data = _api.LoadModConfig<ModConfigData>("chataimod.json") ?? new ModConfigData();
     }
 
-    public void Save()
-    {
-        _api.StoreModConfig(_data, "chataimod.json");
-    }
+    public void Save() => _api.StoreModConfig(_data, "chataimod.json");
+
+    public bool IsKnownProvider(string name) =>
+        KnownProviders.Contains(name.ToLower());
 
     public void SetProvider(string provider)
     {
@@ -34,8 +34,11 @@ public class ConfigManager
     {
         switch (provider.ToUpper())
         {
-            case "MISTRAL": _data.Mistral.ApiKey = key; break;
-            case "OPENAI": _data.OpenAI.ApiKey = key; break;
+            case "MISTRAL":   _data.Mistral.ApiKey = key;   break;
+            case "OPENAI":    _data.OpenAI.ApiKey = key;    break;
+            case "ANTHROPIC": _data.Anthropic.ApiKey = key; break;
+            case "GROK":      _data.Grok.ApiKey = key;      break;
+            case "DEEPSEEK":  _data.DeepSeek.ApiKey = key;  break;
         }
         Save();
     }
@@ -48,9 +51,12 @@ public class ConfigManager
 
     private string GetRawApiKey(string provider) => provider.ToUpper() switch
     {
-        "MISTRAL" => _data.Mistral.ApiKey,
-        "OPENAI" => _data.OpenAI.ApiKey,
-        _ => ""
+        "MISTRAL"   => _data.Mistral.ApiKey,
+        "OPENAI"    => _data.OpenAI.ApiKey,
+        "ANTHROPIC" => _data.Anthropic.ApiKey,
+        "GROK"      => _data.Grok.ApiKey,
+        "DEEPSEEK"  => _data.DeepSeek.ApiKey,
+        _           => ""
     };
 
     public static string ResolveApiKey(string raw)
