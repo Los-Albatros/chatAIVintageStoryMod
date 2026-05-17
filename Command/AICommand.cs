@@ -1,5 +1,7 @@
 using System.Collections.Concurrent;
+using System.Text.Json;
 using chatAIVintageStoryMod.Config;
+using chatAIVintageStoryMod.MCP;
 using chatAIVintageStoryMod.Network;
 using Vintagestory.API.Common;
 using Vintagestory.API.Config;
@@ -11,15 +13,18 @@ public class AICommand
 {
     private readonly ICoreServerAPI _api;
     private readonly ConfigManager _config;
+    private readonly MCPToolRegistry _registry;
     private readonly ConcurrentDictionary<string, DateTime> _rateLimitTracker = new();
     private IServerNetworkChannel _channel = null!;
 
     public const string PrivilegeApiKey = "chataimod.apikey";
+    public const string PrivilegeUse    = "chataimod.use";
 
-    public AICommand(ICoreServerAPI api, ConfigManager config)
+    public AICommand(ICoreServerAPI api, ConfigManager config, MCPToolRegistry registry)
     {
         _api = api;
         _config = config;
+        _registry = registry;
     }
 
     public void Register()
@@ -53,16 +58,19 @@ public class AICommand
         var data = _config.Data;
         string rawKey = data.Provider.ToUpper() switch
         {
-            "MISTRAL" => data.Mistral.ApiKey,
-            "OPENAI" => data.OpenAI.ApiKey,
-            _ => ""
+            "MISTRAL"   => data.Mistral.ApiKey,
+            "OPENAI"    => data.OpenAI.ApiKey,
+            "ANTHROPIC" => data.Anthropic.ApiKey,
+            "GROK"      => data.Grok.ApiKey,
+            "DEEPSEEK"  => data.DeepSeek.ApiKey,
+            _           => ""
         };
         return new AIConfigSyncPacket
         {
-            Provider = data.Provider,
+            Provider         = data.Provider,
             RateLimitSeconds = data.RateLimitSeconds,
-            HasApiKey = !string.IsNullOrEmpty(ConfigManager.ResolveApiKey(rawKey)),
-            IsAdmin = player.HasPrivilege(Privilege.controlserver)
+            HasApiKey        = !string.IsNullOrEmpty(ConfigManager.ResolveApiKey(rawKey)),
+            IsAdmin          = player.HasPrivilege(Privilege.controlserver)
         };
     }
 
@@ -77,7 +85,7 @@ public class AICommand
         if (!string.IsNullOrEmpty(packet.Provider))
         {
             string prov = packet.Provider.ToLower();
-            if (!new[] { "ollama", "mistral", "openai" }.Contains(prov))
+            if (!_config.IsKnownProvider(prov))
             {
                 _channel.SendPacket(new AIResponsePacket { Error = Lang("config.unknown_provider", prov) }, player);
                 return;
@@ -85,9 +93,9 @@ public class AICommand
             _config.SetProvider(prov);
         }
 
-        if (packet.RateLimitSeconds >= 0)
+        if (packet.RateLimitSeconds.HasValue)
         {
-            _config.Data.RateLimitSeconds = packet.RateLimitSeconds;
+            _config.Data.RateLimitSeconds = packet.RateLimitSeconds.Value;
             _config.Save();
         }
 
@@ -112,7 +120,7 @@ public class AICommand
         if (input.StartsWith("config", StringComparison.OrdinalIgnoreCase))
         {
             var parts = input.Split(' ', StringSplitOptions.RemoveEmptyEntries);
-            return HandleConfig(player, parts.Length > 1 ? parts[1..] : []);
+            return HandleConfig(player, parts.Length > 1 ? parts[1..] : new string[0]);
         }
 
         if (string.IsNullOrEmpty(input))
@@ -123,6 +131,9 @@ public class AICommand
 
     private TextCommandResult ExecuteAiQuery(IServerPlayer? player, string input)
     {
+        if (player != null && !HasQueryPermission(player))
+            return TextCommandResult.Error(Lang("ai.no_permission"));
+
         if (player != null && IsRateLimited(player.PlayerUID, out int secondsLeft))
             return TextCommandResult.Error(Lang("ai.rate_limited", secondsLeft));
 
@@ -131,7 +142,10 @@ public class AICommand
             return TextCommandResult.Error(Lang("ai.provider_unavailable"));
 
         if (player != null)
+        {
             _rateLimitTracker[player.PlayerUID] = DateTime.UtcNow;
+            _api.Logger.Audit($"[chatAI] {player.PlayerName}: {input}");
+        }
 
         _ = Task.Run(async () =>
         {
@@ -151,6 +165,12 @@ public class AICommand
         });
 
         return TextCommandResult.Success(Lang("ai.thinking", service.ProviderName));
+    }
+
+    private bool HasQueryPermission(IServerPlayer player)
+    {
+        if (_config.Data.AllowAll) return true;
+        return player.HasPrivilege(PrivilegeUse);
     }
 
     private bool IsRateLimited(string playerUid, out int secondsRemaining)
@@ -190,7 +210,7 @@ public class AICommand
                 if (args.Length < 2)
                     return TextCommandResult.Error(Lang("config.usage"));
                 string prov = args[1].ToLower();
-                if (!new[] { "ollama", "mistral", "openai" }.Contains(prov))
+                if (!_config.IsKnownProvider(prov))
                     return TextCommandResult.Error(Lang("config.unknown_provider", prov));
                 _config.SetProvider(prov);
                 _api.BroadcastMessageToAllGroups(Lang("config.provider_set", prov), EnumChatType.Notification);
@@ -231,18 +251,31 @@ public class AICommand
         {
             "MISTRAL" => (Provider.IAIProvider)new Provider.MistralProvider(
                 ConfigManager.ResolveApiKey(data.Mistral.ApiKey),
-                data.Mistral.Endpoint.Length > 0 ? data.Mistral.Endpoint : "https://api.mistral.ai/v1/chat/completions",
-                data.Mistral.Model.Length > 0 ? data.Mistral.Model : "mistral-large-latest",
+                data.Mistral.Endpoint, data.Mistral.Model,
                 data.Mistral.Temperature, data.Mistral.MaxTokens),
             "OPENAI" => new Provider.OpenAIProvider(
                 ConfigManager.ResolveApiKey(data.OpenAI.ApiKey),
-                data.OpenAI.Endpoint.Length > 0 ? data.OpenAI.Endpoint : "https://api.openai.com/v1/chat/completions",
-                data.OpenAI.Model.Length > 0 ? data.OpenAI.Model : "gpt-4o",
+                data.OpenAI.Endpoint, data.OpenAI.Model,
                 data.OpenAI.Temperature, data.OpenAI.MaxTokens),
+            "ANTHROPIC" => new Provider.AnthropicProvider(
+                ConfigManager.ResolveApiKey(data.Anthropic.ApiKey),
+                data.Anthropic.Endpoint, data.Anthropic.Model,
+                data.Anthropic.Temperature, data.Anthropic.MaxTokens),
+            "GROK" => new Provider.GrokProvider(
+                ConfigManager.ResolveApiKey(data.Grok.ApiKey),
+                data.Grok.Endpoint, data.Grok.Model,
+                data.Grok.Temperature, data.Grok.MaxTokens),
+            "DEEPSEEK" => new Provider.DeepSeekProvider(
+                ConfigManager.ResolveApiKey(data.DeepSeek.ApiKey),
+                data.DeepSeek.Endpoint, data.DeepSeek.Model,
+                data.DeepSeek.Temperature, data.DeepSeek.MaxTokens),
             _ => new Provider.OllamaProvider(data.Ollama.Endpoint, data.Ollama.Model)
         };
-        return new AIService(provider);
+
+        string? systemPrompt = string.IsNullOrWhiteSpace(data.SystemPrompt) ? null : data.SystemPrompt;
+        return new AIService(provider, systemPrompt, _registry);
     }
 
-    private string Lang(string key, params object[] args) => Vintagestory.API.Config.Lang.Get($"chataimod:{key}", args);
+    private string Lang(string key, params object[] args)
+        => Vintagestory.API.Config.Lang.Get($"chataimod:{key}", args);
 }
