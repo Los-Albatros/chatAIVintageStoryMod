@@ -10,7 +10,7 @@ public class MCPToolRegistry
 
     public void Register(MCPTool tool) => _tools[tool.Name] = tool;
 
-    public IReadOnlyList<MCPTool> GetAll() => [.. _tools.Values];
+    public IReadOnlyList<MCPTool> GetAll() => _tools.Values.ToList();
 
     public async Task<string> ExecuteAsync(string name, Dictionary<string, JsonElement> args)
     {
