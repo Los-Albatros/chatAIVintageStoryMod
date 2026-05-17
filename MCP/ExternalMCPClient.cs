@@ -92,7 +92,7 @@ public class ExternalMCPClient
         return JsonSerializer.Deserialize<JsonElement>(result.GetRawText());
     }
 
-    private static MCPTool? ParseTool(JsonElement t)
+    private MCPTool? ParseTool(JsonElement t)
     {
         if (!t.TryGetProperty("name", out var nameEl)) return null;
         var name = nameEl.GetString();
@@ -124,14 +124,13 @@ public class ExternalMCPClient
             }
         }
 
-        // Placeholder handler — real execution goes through ExecuteToolAsync
         var capturedName = name;
         return new MCPTool
         {
             Name = capturedName,
             Description = desc,
             Parameters = parameters,
-            Handler = _ => Task.FromResult($"[External tool '{capturedName}']")
+            Handler = args => ExecuteToolAsync(capturedName, args)
         };
     }
 }

@@ -11,7 +11,6 @@ public class AnthropicProvider : IAIProvider
     private readonly string _apiKey;
     private readonly string _endpoint;
     private readonly string _model;
-    private readonly double _temperature;
     private readonly int _maxTokens;
     private readonly HttpClient _http;
 
@@ -24,7 +23,6 @@ public class AnthropicProvider : IAIProvider
         _apiKey = apiKey;
         _endpoint = !string.IsNullOrEmpty(endpoint) ? endpoint : "https://api.anthropic.com/v1/messages";
         _model = !string.IsNullOrEmpty(model) ? model : "claude-3-5-sonnet-latest";
-        _temperature = temperature;
         _maxTokens = maxTokens;
         _http = http ?? _sharedHttp;
     }
@@ -43,35 +41,33 @@ public class AnthropicProvider : IAIProvider
             using var doc = JsonDocument.Parse(responseBody);
             var content = doc.RootElement.GetProperty("content");
 
-            // Find tool_use block if any
-            JsonElement? toolUseBlock = null;
+            var toolUseBlocks = new List<JsonElement>();
             foreach (var block in content.EnumerateArray())
             {
                 if (block.TryGetProperty("type", out var t) && t.GetString() == "tool_use")
-                {
-                    toolUseBlock = block;
-                    break;
-                }
+                    toolUseBlocks.Add(block);
             }
 
-            if (toolUseBlock.HasValue)
+            if (toolUseBlocks.Count > 0)
             {
-                var toolId = toolUseBlock.Value.GetProperty("id").GetString()!;
-                var toolName = toolUseBlock.Value.GetProperty("name").GetString()!;
-                var toolInput = toolUseBlock.Value.GetProperty("input");
-                var args = JsonSerializer.Deserialize<Dictionary<string, JsonElement>>(toolInput.GetRawText())
-                    ?? new Dictionary<string, JsonElement>();
-                var toolResult = await toolExecutor(toolName, args);
+                var toolResults = new List<object>();
+                foreach (var toolUseBlock in toolUseBlocks)
+                {
+                    var toolId = toolUseBlock.GetProperty("id").GetString()!;
+                    var toolName = toolUseBlock.GetProperty("name").GetString()!;
+                    var toolInput = toolUseBlock.GetProperty("input");
+                    var args = JsonSerializer.Deserialize<Dictionary<string, JsonElement>>(toolInput.GetRawText())
+                        ?? new Dictionary<string, JsonElement>();
+                    var toolResult = await toolExecutor(toolName, args);
+                    toolResults.Add(new { type = "tool_result", tool_use_id = toolId, content = toolResult });
+                }
 
-                // Serialize content array to pass as assistant message content
                 var contentRaw = content.GetRawText();
                 var followUpMessages = new List<object>
                 {
                     new { role = "user", content = prompt },
                     new { role = "assistant", content = JsonSerializer.Deserialize<object>(contentRaw)! },
-                    new { role = "user", content = new object[] {
-                        new { type = "tool_result", tool_use_id = toolId, content = toolResult }
-                    }}
+                    new { role = "user", content = toolResults.ToArray() }
                 };
                 var finalBody = await SendAsync(followUpMessages, systemPrompt, tools: null);
                 using var doc2 = JsonDocument.Parse(finalBody);
