@@ -1,10 +1,12 @@
+using System.Collections.Concurrent;
 using System.Text.Json;
 
 namespace chatAIVintageStoryMod.MCP;
 
 public class MCPToolRegistry
 {
-    private readonly Dictionary<string, MCPTool> _tools = new(StringComparer.OrdinalIgnoreCase);
+    private readonly ConcurrentDictionary<string, MCPTool> _tools =
+        new(StringComparer.OrdinalIgnoreCase);
 
     public int Count => _tools.Count;
 

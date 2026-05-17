@@ -64,6 +64,7 @@ public class ConfigManager
         if (raw.StartsWith("${") && raw.EndsWith("}"))
         {
             string varName = raw[2..^1];
+            if (varName.Length == 0) return "";
             return Environment.GetEnvironmentVariable(varName) ?? "";
         }
         return raw;
@@ -74,6 +75,7 @@ public class ConfigManager
         if (raw.StartsWith("${") && raw.EndsWith("}"))
         {
             string varName = raw[2..^1];
+            if (varName.Length == 0) return "[not set]";
             return Environment.GetEnvironmentVariable(varName) != null ? "[ENV]" : "[not set]";
         }
         if (string.IsNullOrEmpty(raw)) return "[not set]";
