@@ -6,7 +6,9 @@ namespace chatAIVintageStoryMod.Client;
 
 public static class ConfigLibIntegration
 {
-    private static readonly string[] _providers = ["ollama", "mistral", "openai"];
+    private static readonly string[] _providers =
+        { "ollama", "mistral", "openai", "anthropic", "grok", "deepseek" };
+
     private static int _selectedProvider;
     private static int _rateLimitSecs;
     private static string _apiKey = "";
@@ -14,27 +16,52 @@ public static class ConfigLibIntegration
     private static Type? _imgui;
     private static Type? _imguiFlags;
 
+    public static void InvalidateCache() => _lastSyncHash = "";
+
     public static void Register(ICoreClientAPI api, AIClientSystem clientSystem)
     {
         Type? clType = FindType("ConfigLib.ConfigLibModSystem");
-        if (clType == null) return;
+        if (clType == null)
+        {
+            api.Logger.Warning("[chatAI] ConfigLib type not found — ConfigLib integration disabled.");
+            return;
+        }
 
         var modSys = api.ModLoader.GetModSystem(clType.FullName ?? "");
-        if (modSys == null) return;
+        if (modSys == null)
+        {
+            api.Logger.Warning("[chatAI] ConfigLib mod system not loaded — integration disabled.");
+            return;
+        }
 
         var regMethod = clType.GetMethod("RegisterCustomConfig");
-        if (regMethod == null) return;
+        if (regMethod == null)
+        {
+            api.Logger.Warning("[chatAI] ConfigLib.RegisterCustomConfig method not found — integration disabled.");
+            return;
+        }
 
         Type? buttonsType = FindType("ConfigLib.ControlButtons");
-        if (buttonsType == null) return;
+        if (buttonsType == null)
+        {
+            api.Logger.Warning("[chatAI] ConfigLib.ControlButtons type not found — integration disabled.");
+            return;
+        }
 
         _imgui = FindType("ImGuiNET.ImGui");
         _imguiFlags = FindType("ImGuiNET.ImGuiInputTextFlags");
+
+        if (_imgui == null)
+        {
+            api.Logger.Warning("[chatAI] ImGuiNET.ImGui not found — ConfigLib UI will be limited.");
+        }
 
         typeof(ConfigLibIntegration)
             .GetMethod(nameof(BindDelegate), BindingFlags.NonPublic | BindingFlags.Static)!
             .MakeGenericMethod(buttonsType)
             .Invoke(null, new object[] { modSys, regMethod, clientSystem });
+
+        api.Logger.Notification("[chatAI] ConfigLib integration registered.");
     }
 
     private static void BindDelegate<TButtons>(object modSys, MethodInfo regMethod, AIClientSystem clientSystem)
@@ -63,7 +90,16 @@ public static class ConfigLibIntegration
     private static void DrawAll(string id, bool save, AIClientSystem clientSystem)
     {
         var config = clientSystem.ServerConfig;
-        if (config == null) { ImTextDisabled("Waiting for server config..."); return; }
+        if (config == null)
+        {
+            ImText("[chatAI] Waiting for server config...");
+            return;
+        }
+        if (_imgui == null)
+        {
+            ImText("[chatAI] ImGui not available.");
+            return;
+        }
         if (config.IsAdmin) DrawAdmin(id, save, clientSystem, config);
         else DrawReadOnly(config);
     }
@@ -71,7 +107,7 @@ public static class ConfigLibIntegration
     private static void DrawAdmin(string id, bool save, AIClientSystem clientSystem, AIConfigSyncPacket config)
     {
         ImText("Provider");
-        ImSetNextItemWidth(200f);
+        ImSetNextItemWidth(220f);
         ImCombo($"##{id}_prov", ref _selectedProvider, _providers, _providers.Length);
         ImSpacing();
 
@@ -113,13 +149,13 @@ public static class ConfigLibIntegration
     // --- ImGui reflection helpers ---
 
     private static void ImText(string text) =>
-        _imgui?.GetMethod("Text", [typeof(string)])?.Invoke(null, [text]);
+        _imgui?.GetMethod("Text", new[] { typeof(string) })?.Invoke(null, new object[] { text });
 
     private static void ImTextDisabled(string text) =>
-        _imgui?.GetMethod("TextDisabled", [typeof(string)])?.Invoke(null, [text]);
+        _imgui?.GetMethod("TextDisabled", new[] { typeof(string) })?.Invoke(null, new object[] { text });
 
     private static void ImSetNextItemWidth(float w) =>
-        _imgui?.GetMethod("SetNextItemWidth", [typeof(float)])?.Invoke(null, [w]);
+        _imgui?.GetMethod("SetNextItemWidth", new[] { typeof(float) })?.Invoke(null, new object[] { w });
 
     private static void ImSpacing() => InvokeDefaultArgs("Spacing");
 
@@ -163,7 +199,6 @@ public static class ConfigLibIntegration
 
     private static void ImInputTextPassword(string label, ref string text, uint maxLength)
     {
-        // Find InputText(string, ref string, uint, ImGuiInputTextFlags, ...) with Password flag (128)
         MethodInfo? m = null;
         object?[]? args = null;
 
@@ -181,7 +216,7 @@ public static class ConfigLibIntegration
                 var parms = m.GetParameters();
                 args = new object?[parms.Length];
                 args[0] = label; args[1] = text; args[2] = maxLength;
-                args[3] = Enum.ToObject(_imguiFlags, 128); // Password
+                args[3] = Enum.ToObject(_imguiFlags, 128); // Password flag
                 for (int i = 4; i < parms.Length; i++)
                     args[i] = parms[i].HasDefaultValue ? parms[i].DefaultValue : null;
             }

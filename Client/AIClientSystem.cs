@@ -60,6 +60,7 @@ public class AIClientSystem : ModSystem
     private void OnConfigSync(AIConfigSyncPacket packet)
     {
         ServerConfig = packet;
+        ConfigLibIntegration.InvalidateCache();
     }
 
     public void SendConfigChange(AIConfigChangePacket packet)
