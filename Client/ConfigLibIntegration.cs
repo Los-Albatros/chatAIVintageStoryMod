@@ -20,59 +20,100 @@ public static class ConfigLibIntegration
 
     public static void Register(ICoreClientAPI api, AIClientSystem clientSystem)
     {
-        Type? clType = FindType("ConfigLib.ConfigLibModSystem");
-        if (clType == null)
+        try
         {
-            api.Logger.Warning("[chatAI] ConfigLib type not found — ConfigLib integration disabled.");
-            return;
-        }
+            Type? clType = FindType("ConfigLib.ConfigLibModSystem");
+            if (clType == null)
+            {
+                api.Logger.Warning("[chatAI] ConfigLib type not found — ConfigLib integration disabled.");
+                return;
+            }
 
-        var modSys = api.ModLoader.GetModSystem(clType.FullName ?? "");
-        if (modSys == null)
+            var modSys = api.ModLoader.GetModSystem(clType.FullName ?? "");
+            if (modSys == null)
+            {
+                api.Logger.Warning("[chatAI] ConfigLib mod system not loaded — integration disabled.");
+                return;
+            }
+
+            Type? buttonsType = FindType("ConfigLib.ControlButtons");
+            if (buttonsType == null)
+            {
+                api.Logger.Warning("[chatAI] ConfigLib.ControlButtons not found — integration disabled.");
+                return;
+            }
+
+            // Specify exact overload to avoid AmbiguousMatchException (ConfigLib has multiple overloads)
+            var actionType = typeof(Action<,>).MakeGenericType(typeof(string), buttonsType);
+            var regMethod = clType.GetMethod("RegisterCustomConfig", new[] { typeof(string), actionType });
+            if (regMethod == null)
+            {
+                api.Logger.Warning("[chatAI] ConfigLib.RegisterCustomConfig(string, Action<string,ControlButtons>) not found — integration disabled.");
+                return;
+            }
+
+            _imgui = FindType("ImGuiNET.ImGui");
+            _imguiFlags = FindType("ImGuiNET.ImGuiInputTextFlags");
+
+            api.Logger.Notification($"[chatAI] ConfigLib found. ImGui={_imgui != null}, ImGuiFlags={_imguiFlags != null}");
+
+            typeof(ConfigLibIntegration)
+                .GetMethod(nameof(BindDelegate), BindingFlags.NonPublic | BindingFlags.Static)!
+                .MakeGenericMethod(buttonsType)
+                .Invoke(null, new object[] { api, modSys, regMethod, clientSystem });
+
+            api.Logger.Notification("[chatAI] ConfigLib integration registered successfully.");
+        }
+        catch (Exception ex)
         {
-            api.Logger.Warning("[chatAI] ConfigLib mod system not loaded — integration disabled.");
-            return;
+            var inner = (ex as TargetInvocationException)?.InnerException ?? ex;
+            api.Logger.Error($"[chatAI] ConfigLib registration failed: {inner}");
         }
-
-        var regMethod = clType.GetMethod("RegisterCustomConfig");
-        if (regMethod == null)
-        {
-            api.Logger.Warning("[chatAI] ConfigLib.RegisterCustomConfig method not found — integration disabled.");
-            return;
-        }
-
-        Type? buttonsType = FindType("ConfigLib.ControlButtons");
-        if (buttonsType == null)
-        {
-            api.Logger.Warning("[chatAI] ConfigLib.ControlButtons type not found — integration disabled.");
-            return;
-        }
-
-        _imgui = FindType("ImGuiNET.ImGui");
-        _imguiFlags = FindType("ImGuiNET.ImGuiInputTextFlags");
-
-        if (_imgui == null)
-        {
-            api.Logger.Warning("[chatAI] ImGuiNET.ImGui not found — ConfigLib UI will be limited.");
-        }
-
-        typeof(ConfigLibIntegration)
-            .GetMethod(nameof(BindDelegate), BindingFlags.NonPublic | BindingFlags.Static)!
-            .MakeGenericMethod(buttonsType)
-            .Invoke(null, new object[] { modSys, regMethod, clientSystem });
-
-        api.Logger.Notification("[chatAI] ConfigLib integration registered.");
     }
 
-    private static void BindDelegate<TButtons>(object modSys, MethodInfo regMethod, AIClientSystem clientSystem)
+    private static void BindDelegate<TButtons>(ICoreClientAPI api, object modSys, MethodInfo regMethod, AIClientSystem clientSystem)
     {
         Action<string, TButtons> del = (id, buttons) =>
         {
-            SyncFromServer(clientSystem.ServerConfig);
-            bool save = (bool)(typeof(TButtons).GetField("Save")?.GetValue(buttons) ?? false);
-            DrawAll(id, save, clientSystem);
+            try
+            {
+                SyncFromServer(clientSystem.ServerConfig);
+                object? rawSave = typeof(TButtons).GetProperty("Save")?.GetValue(buttons)
+                               ?? typeof(TButtons).GetField("Save")?.GetValue(buttons);
+                bool save = rawSave is bool b && b;
+                DrawAll(id, save, clientSystem);
+            }
+            catch (Exception ex)
+            {
+                var inner = (ex as TargetInvocationException)?.InnerException ?? ex;
+                api.Logger.Error($"[chatAI] ConfigLib draw error: {inner.GetType().Name}: {inner.Message}");
+            }
         };
-        regMethod.Invoke(modSys, new object[] { "chataimod", del });
+
+        var paramType = regMethod.GetParameters().Length >= 2
+            ? regMethod.GetParameters()[1].ParameterType
+            : null;
+
+        object delegateArg;
+        if (paramType != null && paramType != typeof(Action<string, TButtons>))
+        {
+            try
+            {
+                delegateArg = Delegate.CreateDelegate(paramType, del.Target, del.Method);
+                api.Logger.Notification($"[chatAI] Created delegate of type {paramType.Name}");
+            }
+            catch (Exception ex)
+            {
+                api.Logger.Error($"[chatAI] Delegate.CreateDelegate failed ({paramType.Name}): {ex.Message} — using raw Action");
+                delegateArg = del;
+            }
+        }
+        else
+        {
+            delegateArg = del;
+        }
+
+        regMethod.Invoke(modSys, new object[] { "chataimod", delegateArg });
     }
 
     private static void SyncFromServer(AIConfigSyncPacket? config)
@@ -89,6 +130,8 @@ public static class ConfigLibIntegration
 
     private static void DrawAll(string id, bool save, AIClientSystem clientSystem)
     {
+        if (_imgui == null) _imgui = FindType("ImGuiNET.ImGui");
+
         var config = clientSystem.ServerConfig;
         if (config == null)
         {
@@ -97,7 +140,6 @@ public static class ConfigLibIntegration
         }
         if (_imgui == null)
         {
-            ImText("[chatAI] ImGui not available.");
             return;
         }
         if (config.IsAdmin) DrawAdmin(id, save, clientSystem, config);
@@ -216,7 +258,8 @@ public static class ConfigLibIntegration
                 var parms = m.GetParameters();
                 args = new object?[parms.Length];
                 args[0] = label; args[1] = text; args[2] = maxLength;
-                args[3] = Enum.ToObject(_imguiFlags, 128); // Password flag
+                // ImGuiInputTextFlags.Password = 1 << 15 = 32768
+                args[3] = Enum.ToObject(_imguiFlags, 32768);
                 for (int i = 4; i < parms.Length; i++)
                     args[i] = parms[i].HasDefaultValue ? parms[i].DefaultValue : null;
             }
