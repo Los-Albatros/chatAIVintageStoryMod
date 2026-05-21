@@ -1,4 +1,5 @@
-using System.Reflection;
+using ConfigLib;
+using ImGuiNET;
 using chatAIVintageStoryMod.Network;
 using Vintagestory.API.Client;
 
@@ -13,8 +14,6 @@ public static class ConfigLibIntegration
     private static int _rateLimitSecs;
     private static string _apiKey = "";
     private static string _lastSyncHash = "";
-    private static Type? _imgui;
-    private static Type? _imguiFlags;
 
     public static void InvalidateCache() => _lastSyncHash = "";
 
@@ -22,98 +21,32 @@ public static class ConfigLibIntegration
     {
         try
         {
-            Type? clType = FindType("ConfigLib.ConfigLibModSystem");
-            if (clType == null)
-            {
-                api.Logger.Warning("[chatAI] ConfigLib type not found — ConfigLib integration disabled.");
-                return;
-            }
-
-            var modSys = api.ModLoader.GetModSystem(clType.FullName ?? "");
+            var modSys = api.ModLoader.GetModSystem<ConfigLibModSystem>();
             if (modSys == null)
             {
                 api.Logger.Warning("[chatAI] ConfigLib mod system not loaded — integration disabled.");
                 return;
             }
 
-            Type? buttonsType = FindType("ConfigLib.ControlButtons");
-            if (buttonsType == null)
+            modSys.RegisterCustomConfig("chataimod", (id, buttons) =>
             {
-                api.Logger.Warning("[chatAI] ConfigLib.ControlButtons not found — integration disabled.");
-                return;
-            }
-
-            // Specify exact overload to avoid AmbiguousMatchException (ConfigLib has multiple overloads)
-            var actionType = typeof(Action<,>).MakeGenericType(typeof(string), buttonsType);
-            var regMethod = clType.GetMethod("RegisterCustomConfig", new[] { typeof(string), actionType });
-            if (regMethod == null)
-            {
-                api.Logger.Warning("[chatAI] ConfigLib.RegisterCustomConfig(string, Action<string,ControlButtons>) not found — integration disabled.");
-                return;
-            }
-
-            _imgui = FindType("ImGuiNET.ImGui");
-            _imguiFlags = FindType("ImGuiNET.ImGuiInputTextFlags");
-
-            api.Logger.Notification($"[chatAI] ConfigLib found. ImGui={_imgui != null}, ImGuiFlags={_imguiFlags != null}");
-
-            typeof(ConfigLibIntegration)
-                .GetMethod(nameof(BindDelegate), BindingFlags.NonPublic | BindingFlags.Static)!
-                .MakeGenericMethod(buttonsType)
-                .Invoke(null, new object[] { api, modSys, regMethod, clientSystem });
+                try
+                {
+                    SyncFromServer(clientSystem.ServerConfig);
+                    DrawAll(id, buttons.Save, clientSystem);
+                }
+                catch (Exception ex)
+                {
+                    api.Logger.Error($"[chatAI] ConfigLib draw error: {ex.GetType().Name}: {ex.Message}");
+                }
+            });
 
             api.Logger.Notification("[chatAI] ConfigLib integration registered successfully.");
         }
         catch (Exception ex)
         {
-            var inner = (ex as TargetInvocationException)?.InnerException ?? ex;
-            api.Logger.Error($"[chatAI] ConfigLib registration failed: {inner}");
+            api.Logger.Error($"[chatAI] ConfigLib registration failed: {ex}");
         }
-    }
-
-    private static void BindDelegate<TButtons>(ICoreClientAPI api, object modSys, MethodInfo regMethod, AIClientSystem clientSystem)
-    {
-        Action<string, TButtons> del = (id, buttons) =>
-        {
-            try
-            {
-                SyncFromServer(clientSystem.ServerConfig);
-                object? rawSave = typeof(TButtons).GetProperty("Save")?.GetValue(buttons)
-                               ?? typeof(TButtons).GetField("Save")?.GetValue(buttons);
-                bool save = rawSave is bool b && b;
-                DrawAll(id, save, clientSystem);
-            }
-            catch (Exception ex)
-            {
-                var inner = (ex as TargetInvocationException)?.InnerException ?? ex;
-                api.Logger.Error($"[chatAI] ConfigLib draw error: {inner.GetType().Name}: {inner.Message}");
-            }
-        };
-
-        var paramType = regMethod.GetParameters().Length >= 2
-            ? regMethod.GetParameters()[1].ParameterType
-            : null;
-
-        object delegateArg;
-        if (paramType != null && paramType != typeof(Action<string, TButtons>))
-        {
-            try
-            {
-                delegateArg = Delegate.CreateDelegate(paramType, del.Target, del.Method);
-                api.Logger.Notification($"[chatAI] Created delegate of type {paramType.Name}");
-            }
-            catch (Exception ex)
-            {
-                api.Logger.Error($"[chatAI] Delegate.CreateDelegate failed ({paramType.Name}): {ex.Message} — using raw Action");
-                delegateArg = del;
-            }
-        }
-        else
-        {
-            delegateArg = del;
-        }
-
-        regMethod.Invoke(modSys, new object[] { "chataimod", delegateArg });
     }
 
     private static void SyncFromServer(AIConfigSyncPacket? config)
@@ -130,16 +63,10 @@ public static class ConfigLibIntegration
 
     private static void DrawAll(string id, bool save, AIClientSystem clientSystem)
     {
-        if (_imgui == null) _imgui = FindType("ImGuiNET.ImGui");
-
         var config = clientSystem.ServerConfig;
         if (config == null)
         {
-            ImText("[chatAI] Waiting for server config...");
-            return;
-        }
-        if (_imgui == null)
-        {
+            ImGui.Text("Waiting for server config...");
             return;
         }
         if (config.IsAdmin) DrawAdmin(id, save, clientSystem, config);
@@ -148,23 +75,23 @@ public static class ConfigLibIntegration
 
     private static void DrawAdmin(string id, bool save, AIClientSystem clientSystem, AIConfigSyncPacket config)
     {
-        ImText("Provider");
-        ImSetNextItemWidth(220f);
-        ImCombo($"##{id}_prov", ref _selectedProvider, _providers, _providers.Length);
-        ImSpacing();
+        ImGui.Text("Provider");
+        ImGui.SetNextItemWidth(220f);
+        ImGui.Combo($"##{id}_prov", ref _selectedProvider, _providers, _providers.Length);
+        ImGui.Spacing();
 
-        ImText("Rate limit (seconds per player, 0 = disabled)");
-        ImSetNextItemWidth(120f);
-        ImInputInt($"##{id}_rate", ref _rateLimitSecs);
+        ImGui.Text("Rate limit (seconds per player, 0 = disabled)");
+        ImGui.SetNextItemWidth(120f);
+        ImGui.InputInt($"##{id}_rate", ref _rateLimitSecs);
         if (_rateLimitSecs < 0) _rateLimitSecs = 0;
-        ImSpacing();
+        ImGui.Spacing();
 
-        ImText("API Key");
-        ImTextDisabled(config.HasApiKey ? "  currently: configured" : "  currently: not set");
-        ImSetNextItemWidth(350f);
-        ImInputTextPassword($"##{id}_key", ref _apiKey, 256);
-        ImSameLine();
-        ImTextDisabled("(leave empty to keep current)");
+        ImGui.Text("API Key");
+        ImGui.TextDisabled(config.HasApiKey ? "  currently: configured" : "  currently: not set");
+        ImGui.SetNextItemWidth(350f);
+        ImGui.InputText($"##{id}_key", ref _apiKey, 256, ImGuiInputTextFlags.Password);
+        ImGui.SameLine();
+        ImGui.TextDisabled("(leave empty to keep current)");
 
         if (save)
         {
@@ -181,129 +108,10 @@ public static class ConfigLibIntegration
 
     private static void DrawReadOnly(AIConfigSyncPacket config)
     {
-        ImText($"Provider:    {config.Provider}");
-        ImText($"Rate limit:  {(config.RateLimitSeconds > 0 ? $"{config.RateLimitSeconds}s per player" : "disabled")}");
-        ImText($"API Key:     {(config.HasApiKey ? "configured" : "not set")}");
-        ImSpacing();
-        ImTextDisabled("Settings are managed by the server admin.");
-    }
-
-    // --- ImGui reflection helpers ---
-
-    private static void ImText(string text) =>
-        _imgui?.GetMethod("Text", new[] { typeof(string) })?.Invoke(null, new object[] { text });
-
-    private static void ImTextDisabled(string text) =>
-        _imgui?.GetMethod("TextDisabled", new[] { typeof(string) })?.Invoke(null, new object[] { text });
-
-    private static void ImSetNextItemWidth(float w) =>
-        _imgui?.GetMethod("SetNextItemWidth", new[] { typeof(float) })?.Invoke(null, new object[] { w });
-
-    private static void ImSpacing() => InvokeDefaultArgs("Spacing");
-
-    private static void ImSameLine() => InvokeDefaultArgs("SameLine");
-
-    private static void ImCombo(string label, ref int current, string[] items, int count)
-    {
-        var m = _imgui?.GetMethods().FirstOrDefault(m =>
-            m.Name == "Combo" &&
-            m.GetParameters() is { Length: >= 4 } ps &&
-            ps[0].ParameterType == typeof(string) &&
-            ps[1].ParameterType == typeof(int).MakeByRefType() &&
-            ps[2].ParameterType == typeof(string[]) &&
-            ps[3].ParameterType == typeof(int));
-        if (m == null) return;
-        var parms = m.GetParameters();
-        object?[] args = new object?[parms.Length];
-        args[0] = label; args[1] = current; args[2] = items; args[3] = count;
-        for (int i = 4; i < parms.Length; i++)
-            args[i] = parms[i].HasDefaultValue ? parms[i].DefaultValue : null;
-        m.Invoke(null, args);
-        current = (int)(args[1] ?? current);
-    }
-
-    private static void ImInputInt(string label, ref int value)
-    {
-        var m = _imgui?.GetMethods().FirstOrDefault(m =>
-            m.Name == "InputInt" &&
-            m.GetParameters() is { Length: >= 2 } ps &&
-            ps[0].ParameterType == typeof(string) &&
-            ps[1].ParameterType == typeof(int).MakeByRefType());
-        if (m == null) return;
-        var parms = m.GetParameters();
-        object?[] args = new object?[parms.Length];
-        args[0] = label; args[1] = value;
-        for (int i = 2; i < parms.Length; i++)
-            args[i] = parms[i].HasDefaultValue ? parms[i].DefaultValue : null;
-        m.Invoke(null, args);
-        value = (int)(args[1] ?? value);
-    }
-
-    private static void ImInputTextPassword(string label, ref string text, uint maxLength)
-    {
-        MethodInfo? m = null;
-        object?[]? args = null;
-
-        if (_imguiFlags != null)
-        {
-            m = _imgui?.GetMethods().FirstOrDefault(m =>
-                m.Name == "InputText" &&
-                m.GetParameters() is { Length: >= 4 } ps &&
-                ps[0].ParameterType == typeof(string) &&
-                ps[1].ParameterType == typeof(string).MakeByRefType() &&
-                ps[2].ParameterType == typeof(uint) &&
-                ps[3].ParameterType == _imguiFlags);
-            if (m != null)
-            {
-                var parms = m.GetParameters();
-                args = new object?[parms.Length];
-                args[0] = label; args[1] = text; args[2] = maxLength;
-                // ImGuiInputTextFlags.Password = 1 << 15 = 32768
-                args[3] = Enum.ToObject(_imguiFlags, 32768);
-                for (int i = 4; i < parms.Length; i++)
-                    args[i] = parms[i].HasDefaultValue ? parms[i].DefaultValue : null;
-            }
-        }
-
-        if (m == null)
-        {
-            m = _imgui?.GetMethods().FirstOrDefault(m =>
-                m.Name == "InputText" &&
-                m.GetParameters() is { Length: >= 3 } ps &&
-                ps[0].ParameterType == typeof(string) &&
-                ps[1].ParameterType == typeof(string).MakeByRefType() &&
-                ps[2].ParameterType == typeof(uint));
-            if (m != null)
-            {
-                var parms = m.GetParameters();
-                args = new object?[parms.Length];
-                args[0] = label; args[1] = text; args[2] = maxLength;
-                for (int i = 3; i < parms.Length; i++)
-                    args[i] = parms[i].HasDefaultValue ? parms[i].DefaultValue : null;
-            }
-        }
-
-        if (m == null || args == null) return;
-        m.Invoke(null, args);
-        text = (string)(args[1] ?? text);
-    }
-
-    private static void InvokeDefaultArgs(string methodName)
-    {
-        var m = _imgui?.GetMethods().FirstOrDefault(m => m.Name == methodName);
-        if (m == null) return;
-        var ps = m.GetParameters();
-        object?[] args = ps.Select(p => p.HasDefaultValue ? p.DefaultValue : null).ToArray<object?>();
-        m.Invoke(null, args);
-    }
-
-    private static Type? FindType(string typeName)
-    {
-        foreach (var asm in AppDomain.CurrentDomain.GetAssemblies())
-        {
-            var t = asm.GetType(typeName);
-            if (t != null) return t;
-        }
-        return null;
+        ImGui.Text($"Provider:    {config.Provider}");
+        ImGui.Text($"Rate limit:  {(config.RateLimitSeconds > 0 ? $"{config.RateLimitSeconds}s per player" : "disabled")}");
+        ImGui.Text($"API Key:     {(config.HasApiKey ? "configured" : "not set")}");
+        ImGui.Spacing();
+        ImGui.TextDisabled("Settings are managed by the server admin.");
     }
 }

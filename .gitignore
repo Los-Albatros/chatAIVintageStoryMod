@@ -2,4 +2,5 @@ bin/
 obj/
 *.user
 .vs/
-lib/
+# lib/ DLLs are tracked (reference-only, not bundled in mod output)
+# lib/

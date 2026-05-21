@@ -2,7 +2,7 @@
     "type": "code",
     "name": "chatAI",
     "modid": "chataimod",
-    "version": "1.0.2",
+    "version": "1.0.3",
     "description": "Ask AI questions in-game. Supports Ollama, Mistral, OpenAI, Anthropic, Grok, DeepSeek. Per-player permissions, rate limiting, system prompt, MCP tool API for submods.",
     "authors": ["Los Albatros"],
     "website": "https://github.com/Los-Albatros/chatAIVintageStoryMod",
